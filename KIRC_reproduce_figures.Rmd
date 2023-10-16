@@ -1,0 +1,819 @@
+---
+title: "Nucleotide excision repair deficiency is a targetable therapeutic vulnerability in clear cell renal cell carcinoma"
+author: "Aurél Prósz (agp@cancer.dk) - Danish Cancer Society Research Center, Translational Cancer Genomics Group"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+    toc: true
+    toc_float: true
+    theme: journal
+---
+
+
+
+```{r}
+knitr::opts_chunk$set( warning=FALSE)
+library(ggplot2)
+library(reshape2)
+library(forcats)
+library("pander")
+library(data.table)
+library(ggpubr)
+library(ggprism)
+library(ggnewscale)
+library(dplyr)
+library(scales)
+library(RColorBrewer)
+library(ggrepel)
+library(RColorBrewer)
+library(jtools)
+library(ggstance)
+library(stringr)
+library(ggtext)
+```
+
+## Extract ptgr1 expression
+```{r, eval = F}
+df_all <- data.frame()
+folders <- list.dirs(path = "expression/", full.names = TRUE, recursive = TRUE)
+folders <- folders[-1]
+
+for (fold in folders){
+  
+  file_it <- list.files(fold, pattern = ".tsv")
+  
+  df <- fread(paste0(fold, "/",file_it), data.table = F)
+  df <- df[df$gene_name == "PTGR1",]
+  df$samplename <- fold
+  df_all <- rbind(df_all, df)
+}
+fwrite(df_all, file = "ptgr1_tpm_fpkm.csv")
+
+df_all <- fread("ptgr1_tpm_fpkm.csv")
+df_all$tpm_log2 <- log2(df_all$tpm_unstranded+1)
+df_all$fpkm_log2 <- log2(df_all$fpkm_unstranded+1)
+```
+
+## plot log dose figures
+
+```{r, fig.width=10, fig.height=6}
+df <- fread("irofulven_2.txt", data.table = F)
+ic50s <- df$`IC50 values`
+
+df$`IC50 values` <- NULL
+df1 <- df[,c(2:11)]
+
+df_error <- df[,c(12:21)]
+#df1 <- df
+row.names(df1) <- df$V1
+
+df1 <- data.frame(t(df1))
+df1$dose <- row.names(df1)
+df1[,"dose"] <- sub(" nM", "", df1[,"dose"])
+df1[,"dose"] <- as.numeric(df1[,"dose"])
+
+row.names(df_error) <- df$V1
+df_error <- data.frame(t(df_error))
+df_error$dose <- row.names(df1)
+df_error[,"dose"] <- sub(" nM", "", df_error[,"dose"])
+df_error[,"dose"] <- as.numeric(df_error[,"dose"])
+
+df_error <- melt(df_error, id.vars = "dose")
+
+colnames(df_error) <- c("dose", "cell_line", "errorterm")
+
+df1 <- melt(df1, id.vars = "dose")
+
+df1$dose_lin <- (df1$dose)+1
+df1$dose <- log10(df1$dose)
+
+df_error$dose <- df_error$dose+1
+
+dose_resp <- y ~ 1 / (1 + exp(-1*hill_coefficient * (ec50 - x)))
+#dose_resp <- y ~ 1 / (1 + (x/ec50)^(-1*hill_coefficient))
+
+df1_merged <- merge(df1, df_error, by.x = c("dose_lin", "variable"), by.y = c("dose", "cell_line"))
+df1_merged$value <- df1_merged$value/100
+df1_merged$errorterm <- df1_merged$errorterm/100
+  
+df1_merged$variable <- as.character(df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X769P", "769P", df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X786O", "786O", df1_merged$variable)
+
+
+p <- ggplot(df1_merged, aes(x = dose_lin, y = value))
+p <- p +  theme_minimal( base_size = 26)+
+
+  geom_point(aes(colour = variable), size = 1) + 
+  geom_smooth(
+  aes(colour = variable),
+  method = "nls", formula = dose_resp, se = FALSE,
+  method.args = list(start = list( ec50 = 3, hill_coefficient = 1))
+)
+p <- p + theme(axis.text.x = element_text(angle = 0)) +  geom_errorbar(aes(ymax = value + errorterm,
+                      ymin = value - errorterm,colour = variable)) + xlab("Dose (nM) + 1") + ylab("Viability") + scale_x_continuous(trans='log10')+ scale_color_brewer(palette = "Dark2")  +
+  theme(legend.title=element_blank())
+p
+```
+
+## plot PTGR1 expression
+```{r}
+expression_df <- fread("ptgr1_exp.txt", data.table = F)
+
+ggscatter(expression_df, x = "ptgr1", y = "ic50",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson", label.x = 7.5, label.y = 600) +ylab("IC50 (nM)")+xlab("PTGR1 normalized expression")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ptgr1, y=ic50, label = cell_line, color = 'white')) + theme(legend.position="none") 
+
+
+
+```
+
+
+```{r}
+features_df <- fread("nonhrd_kidney.csv", data.table = F)
+features_df <- features_df[,c("stripped_cell_line_name", "ID8", "ERCC2mut_score")]
+
+expression_df <- fread("ptgr1_exp.txt", data.table = F)
+
+expression_df <- merge(expression_df, features_df, by.x = "cell_line", by.y = "stripped_cell_line_name")
+
+ggscatter(expression_df, x = "ptgr1", y = "ic50",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson", label.x = 7.5, label.y = 600) +ylab("IC50 (nM)")+xlab("PTGR1 normalized expression")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ptgr1, y=ic50, label = cell_line, color = ID8)) + #scale_color_gradient2(low = "#bdc3c7", midpoint = median(expression_df$ID8), mid = "grey", high = "#2c3e50")
+ scale_color_gradient(low = "grey",high = "#19547b")
+
+
+```
+
+
+```{r}
+features_df <- fread("nonhrd_kidney.csv", data.table = F)
+features_df <- features_df[,c("stripped_cell_line_name", "ID8", "ERCC2mut_score")]
+
+expression_df <- fread("ptgr1_exp.txt", data.table = F)
+
+expression_df <- merge(expression_df, features_df, by.x = "cell_line", by.y = "stripped_cell_line_name")
+
+ggscatter(expression_df, x = "ptgr1", y = "ic50",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson", label.x = 7.5, label.y = 600) +ylab("IC50 (nM)")+xlab("PTGR1 normalized expression")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ptgr1, y=ic50, label = cell_line, color = ERCC2mut_score)) + #scale_color_gradient2(low = "#bdc3c7", midpoint = median(expression_df$ID8), mid = "grey", high = "#2c3e50")
+ scale_color_gradient(low = "grey",high = "#19547b")
+
+
+```
+
+```{r}
+features_df <- fread("nonhrd_kidney.csv", data.table = F)
+features_df <- features_df[,c("stripped_cell_line_name", "ID8", "ERCC2mut_score")]
+
+expression_df <- fread("ptgr1_exp.txt", data.table = F)
+
+expression_df <- merge(expression_df, features_df, by.x = "cell_line", by.y = "stripped_cell_line_name")
+
+ggscatter(expression_df, x = "ID8", y = "ic50",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson", label.x = 2, label.y = 600) +ylab("IC50 (nM)")+xlab("ID8")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ID8, y=ic50, label = cell_line, color = ptgr1)) + #scale_color_gradient2(low = "#bdc3c7", midpoint = median(expression_df$ID8), mid = "grey", high = "#2c3e50")
+ scale_color_gradient(low = "grey",high = "#19547b")+  labs(color='PTGR1 expression') 
+
+
+```
+
+
+```{r}
+features_df <- fread("nonhrd_kidney.csv", data.table = F)
+features_df <- features_df[,c("stripped_cell_line_name", "ID8", "ERCC2mut_score")]
+
+expression_df <- fread("ptgr1_exp.txt", data.table = F)
+
+expression_df <- merge(expression_df, features_df, by.x = "cell_line", by.y = "stripped_cell_line_name")
+
+ggscatter(expression_df, x = "ERCC2mut_score", y = "ic50",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson", label.x = 0.4, label.y = 600) +ylab("IC50 (nM)")+xlab("ERCC2mut_score")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ERCC2mut_score, y=ic50, label = cell_line, color = ptgr1)) + #scale_color_gradient2(low = "#bdc3c7", midpoint = median(expression_df$ID8), mid = "grey", high = "#2c3e50")
+ scale_color_gradient(low = "grey",high = "#19547b")+  labs(color='PTGR1 expression') 
+
+
+```
+
+
+Fit:
+
+```{r}
+model <- lm(ic50 ~ ptgr1 : ID8 , data = expression_df)
+summary(model)
+
+plot_summs(model)
+
+```
+
+## plot the figures related to 64pp
+
+```{r}
+df <- fread("64pp.txt", data.table = F)
+
+df1 <- df[,c(2:4)]
+
+df_error <- df[,c(5:7)]
+#df1 <- df
+row.names(df1) <- df$V1
+
+df1 <- data.frame(t(df1))
+df1$time <- row.names(df1)
+df1[,"time"] <- sub("hr", "", df1[,"time"])
+df1[,"time"] <- as.numeric(df1[,"time"])
+
+row.names(df_error) <- df$V1
+df_error <- data.frame(t(df_error))
+df_error$time <- row.names(df1)
+df_error[,"time"] <- sub("hr", "", df_error[,"time"])
+df_error[,"time"] <- as.numeric(df_error[,"time"])
+
+df_error <- melt(df_error, id.vars = "time")
+
+colnames(df_error) <- c("time", "cell_line", "errorterm")
+
+df1 <- melt(df1, id.vars = "time")
+
+df1_merged <- merge(df1, df_error, by.x = c("time", "variable"), by.y = c("time", "cell_line"))
+df1_merged$time <- as.character(df1_merged$time)
+
+
+df1_merged$variable <- as.character(df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X769P", "769P", df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X786O", "786O", df1_merged$variable)
+
+df1_merged <- df1_merged[!df1_merged$variable %in% c("Hela", "RPE1"),]
+
+df1_merged$time = paste0(df1_merged$time, "hr")
+
+
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460.ERCC4.KO"), "red", "black")
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460"), "green",df1_merged$a)
+df1_merged$a <- ifelse(!df1_merged$variable %in% c("H460.ERCC4.KO","H460"), "blue", df1_merged$a)
+df1_merged$variable  = factor(df1_merged$variable, levels=c( "H460.ERCC4.KO", "H460","RXF393","786O","HK.2","A498", "769P" ))
+a <- c("#E41A1C", "#4DAF4A","#377EB8","#377EB8","#377EB8","#377EB8","#377EB8")
+brewer.pal(n=7,"Oranges")
+df1_merged <- df1_merged[df1_merged$time == "7hr",]
+
+
+expression_df_1 <- merge(expression_df, df1_merged, by.x = "cell_line", by.y = "variable")
+
+
+```
+
+
+
+```{r}
+ggscatter(expression_df_1, x = "ERCC2mut_score", y = "value",
+          add = "reg.line",                               # Add regression line
+          conf.int = FALSE,                                  # Add confidence interval
+          add.params = list(color = "blue",
+                            fill = "lightgray",font.family = "Arial")
+          )+
+  stat_cor(method = "pearson") +ylab("7h")+xlab("ID8")  +
+  theme(legend.position="none")+theme_bw(base_size = 18)+ geom_label_repel(aes(x=ERCC2mut_score, y=value, label = cell_line, color = ptgr1)) + #scale_color_gradient2(low = "#bdc3c7", midpoint = median(expression_df$ID8), mid = "grey", high = "#2c3e50")
+ scale_color_gradient(low = "grey",high = "#19547b")+  labs(color='ptgr1') 
+
+```
+
+
+
+```{r}
+df <- fread("64pp.txt", data.table = F)
+
+df1 <- df[,c(2:4)]
+
+df_error <- df[,c(5:7)]
+#df1 <- df
+row.names(df1) <- df$V1
+
+df1 <- data.frame(t(df1))
+df1$time <- row.names(df1)
+df1[,"time"] <- sub("hr", "", df1[,"time"])
+df1[,"time"] <- as.numeric(df1[,"time"])
+
+row.names(df_error) <- df$V1
+df_error <- data.frame(t(df_error))
+df_error$time <- row.names(df1)
+df_error[,"time"] <- sub("hr", "", df_error[,"time"])
+df_error[,"time"] <- as.numeric(df_error[,"time"])
+
+df_error <- melt(df_error, id.vars = "time")
+
+colnames(df_error) <- c("time", "cell_line", "errorterm")
+
+df1 <- melt(df1, id.vars = "time")
+
+df1_merged <- merge(df1, df_error, by.x = c("time", "variable"), by.y = c("time", "cell_line"))
+df1_merged$time <- as.character(df1_merged$time)
+
+
+df1_merged$variable <- as.character(df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X769P", "769P", df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X786O", "786O", df1_merged$variable)
+
+df1_merged <- df1_merged[!df1_merged$variable %in% c("Hela", "RPE1"),]
+
+df1_merged$time = paste0(df1_merged$time, "hr")
+
+
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460.ERCC4.KO"), "red", "black")
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460"), "green",df1_merged$a)
+df1_merged$a <- ifelse(!df1_merged$variable %in% c("H460.ERCC4.KO","H460"), "blue", df1_merged$a)
+df1_merged$variable  = factor(df1_merged$variable, levels=c( "H460.ERCC4.KO", "H460","RXF393","786O","HK.2","A498", "769P" ))
+a <- c("#E41A1C", "#4DAF4A","#377EB8","#377EB8","#377EB8","#377EB8","#377EB8")
+brewer.pal(n=7,"Oranges")
+
+
+
+
+
+```
+
+```{r, fig.width=10, fig.height=6}
+png(filename="64pp.png", width = 800, height = 600)
+ggbarplot(df1_merged, x = "variable", y = "value", fill = "time",
+ add = "mean_se", palette = c("#8C2D04", "#F16913", "#FDAE6B"),
+ position = position_dodge())+  geom_errorbar(aes(ymax = value + errorterm,
+                      ymin = value - errorterm,colour = time),
+                position = position_dodge(width = 0.95), width = 0.25, show.legend = F) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, colour = a))+ ylab("64pp signal")+ labs(fill ="Time after UV exposure", color = "") + xlab("Cell lines") + theme(text = element_text(size = 20)) # this will change all text size 
+                                                             # (except geom_text)
+
+dev.off()
+```
+
+
+```{r}
+df <- fread("64pp.txt", data.table = F)
+
+df1 <- df[,c(2:4)]
+
+df_error <- df[,c(5:7)]
+#df1 <- df
+row.names(df1) <- df$V1
+
+df1 <- data.frame(t(df1))
+df1$time <- row.names(df1)
+df1[,"time"] <- sub("hr", "", df1[,"time"])
+df1[,"time"] <- as.numeric(df1[,"time"])
+
+row.names(df_error) <- df$V1
+df_error <- data.frame(t(df_error))
+df_error$time <- row.names(df1)
+df_error[,"time"] <- sub("hr", "", df_error[,"time"])
+df_error[,"time"] <- as.numeric(df_error[,"time"])
+
+df_error <- melt(df_error, id.vars = "time")
+
+colnames(df_error) <- c("time", "cell_line", "errorterm")
+
+df1 <- melt(df1, id.vars = "time")
+
+df1_merged <- merge(df1, df_error, by.x = c("time", "variable"), by.y = c("time", "cell_line"))
+df1_merged$time <- as.character(df1_merged$time)
+
+
+df1_merged$variable <- as.character(df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X769P", "769P", df1_merged$variable)
+df1_merged$variable <- ifelse(df1_merged$variable == "X786O", "786O", df1_merged$variable)
+
+df1_merged <- df1_merged[!df1_merged$variable %in% c("Hela", "RPE1"),]
+
+df1_merged$time = paste0(df1_merged$time, "hr")
+
+
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460.ERCC4.KO"), "red", "black")
+df1_merged$a <- ifelse(df1_merged$variable %in% c("H460"), "green",df1_merged$a)
+df1_merged$a <- ifelse(!df1_merged$variable %in% c("H460.ERCC4.KO","H460"), "blue", df1_merged$a)
+df1_merged$variable  = factor(df1_merged$variable, levels=c( "H460.ERCC4.KO", "H460","RXF393","786O","HK.2","A498", "769P" ))
+a <- c("#E41A1C", "#4DAF4A","#377EB8","#377EB8","#377EB8","#377EB8","#377EB8")
+brewer.pal(n=7,"Oranges")
+df1_merged <- df1_merged[df1_merged$time == "7hr",]
+
+
+
+
+```
+
+
+```{r, fig.width=10, fig.height=6, eval = F}
+png(filename="64pp_updated.png", width = 800, height = 600)
+ggbarplot(df1_merged, x = "variable", y = "value", fill = "a",
+ add = "mean_se", palette = c("#377EB8","#4DAF4A","#E41A1C"),
+ position = position_dodge())+  geom_errorbar(aes(ymax = value + errorterm,
+                      ymin = value - errorterm),
+                position = position_dodge(width = 0.95), width = 0.5, show.legend = F,colour = "black") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, colour = a))+ ylab("64pp signal at 7hr (%)")+ labs(fill ="Time after UV exposure", color = "") + xlab("") + theme(text = element_text(size = 26))+ theme(legend.position = "none") # this will change all text size 
+                                                             # (except geom_text)
+
+dev.off()
+```
+
+```{r, fig.width=10, fig.height=6, eval = F}
+svg(filename="64pp_updated.svg")
+ggbarplot(df1_merged, x = "variable", y = "value", fill = "a",
+ add = "mean_se", palette = c("#377EB8","#4DAF4A","#E41A1C"),
+ position = position_dodge())+  geom_errorbar(aes(ymax = value + errorterm,
+                      ymin = value - errorterm),
+                position = position_dodge(width = 0.95), width = 0.5, show.legend = F,colour = "black") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, colour = a))+ ylab("64pp signal at 7hr (%)")+ labs(fill ="Time after UV exposure", color = "") + xlab("") + theme(text = element_text(size = 20)) # this will change all text size 
+                                                             # (except geom_text)
+
+dev.off()
+```
+
+
+
+
+```{r, fig.width=5, fig.height=5}
+df <- fread("PTGR1_knockdown_normalized.txt", data.table = F)
+
+df <- reshape2::melt(df)
+#row.names(df) <- df$metadata
+#df$metadata <- NULL
+
+
+
+
+
+df1 <- df[df$metadata == "HMLE ERCC3 WT/WT",]
+splitted <- data.frame(str_split_fixed(df1$variable, ", ", 2))
+df1 <- cbind(df1, splitted)
+#df1$value <- (df1$value - min(df1$value))/(max(df1$value) - min(df1$value))
+
+ggbarplot(df1, x = "X1", y = "value", fill = "X2", 
+ add = "mean_se", error.plot = "upper_errorbar",
+  position = position_dodge(0.9)) + xlab("")+ theme(axis.text.x = element_text(angle = 50, vjust = 0.5)) + ylab("Relative cell viability")+ scale_fill_manual("X2", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                    "NTC siRNA" = "Control",
+                                    "PTGR1 siRNA" = "PTGR1 siRNA"
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "NTC siRNA" = "black" ,
+                                     "PTGR1 siRNA" = "grey"
+                                  
+                                   
+                                     
+                                    ))+ theme(legend.title= element_blank())+ stat_compare_means(aes(group = df1$X2), label = "p.signif") + ggtitle("HMLE^WT/WT") + theme(plot.title = element_markdown())+ scale_y_continuous(limits = c(0, 1.5))
+```
+
+
+```{r, fig.width=5, fig.height=5}
+df <- fread("PTGR1_knockdown_normalized.txt", data.table = F)
+
+df <- reshape2::melt(df)
+#row.names(df) <- df$metadata
+#df$metadata <- NULL
+
+
+
+
+
+df1 <- df[df$metadata == "HMLE ERCC3 WT/R109",]
+splitted <- data.frame(str_split_fixed(df1$variable, ", ", 2))
+df1 <- cbind(df1, splitted)
+#df1$value <- (df1$value - min(df1$value))/(max(df1$value) - min(df1$value))
+
+ggbarplot(df1, x = "X1", y = "value", fill = "X2", 
+ add = "mean_se", error.plot = "upper_errorbar",
+  position = position_dodge(0.9)) + xlab("")+ theme(text=element_text(size=15),axis.text.x = element_text(angle = 50, vjust = 0.5)) + ylab("Relative cell viability")+ scale_fill_manual("X2", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                    "NTC siRNA" = "Control",
+                                    "PTGR1 siRNA" = "PTGR1 siRNA"
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "NTC siRNA" = "black" ,
+                                     "PTGR1 siRNA" = "grey"
+                                  
+                         
+        
+                                     
+                                    ))+ theme(legend.title= element_blank())+ stat_compare_means(aes(group = df1$X2), label = "p.signif", size =5) + ggtitle(expression(HMLE^"WT/R109")) + scale_y_continuous(limits = c(0, 1.5))
+#theme(plot.title = ggtext::element_markdown())
+```
+
+
+```{r}
+load("KIRC.RData")
+load("genotype_out_KIRC.RData")
+plotdt_temp <- as.data.frame(joined)
+plotdt_pat <- plotdt_temp[order(plotdt_temp$NERDetect_score),]
+
+plotdt_pat <- data.table(plotdt_pat)
+plotdt_pat$ID8 <- as.numeric(as.character(plotdt_pat$ID8))
+plotdt_pat$Signature.2 <- as.numeric(as.character(plotdt_pat$weights.Signature.2))
+plotdt_pat$Signature.5 <- as.numeric(as.character(plotdt_pat$weights.Signature.5))
+plotdt_pat$TSB_ratio_TtoA <- as.numeric(as.character(plotdt_pat$TSB_ratio_TtoA))
+plotdt_pat$TSB_ratio_CtoG <- as.numeric(as.character(plotdt_pat$TSB_ratio_CtoG))
+plotdt_pat$DBS4 <- as.numeric(as.character(plotdt_pat$DBS4))
+plotdt_pat$ID2 <- as.numeric(as.character(plotdt_pat$ID2))
+plotdt_pat$TSB_ratio_TtoG <- as.numeric(as.character(plotdt_pat$TSB_ratio_TtoG))
+
+plotdt_pat$BRCAdefColor_colorscheme <- "#A9A9A9"
+
+plotdt_pat$ERCC1_final <- ifelse(plotdt_pat$ERCC1_germlinep == "1","ERCC1",NA)
+plotdt_pat$ERCC2_final <- ifelse(plotdt_pat$ERCC2_germlinep == "1","ERCC2",NA)
+plotdt_pat$ERCC3_final <- ifelse(plotdt_pat$ERCC3_germlinep == "1","ERCC3",NA)
+plotdt_pat$ERCC4_final <- ifelse(plotdt_pat$ERCC4_germlinep == "1","ERCC4",NA)
+plotdt_pat$ERCC5_final <- ifelse(plotdt_pat$ERCC5_germlinep == "1","ERCC5",NA)
+plotdt_pat$ERCC6_final <- ifelse(plotdt_pat$ERCC6_germlinep == "1","ERCC6",NA)
+plotdt_pat$ERCC8_final <- ifelse(plotdt_pat$ERCC8_germlinep == "1","ERCC8",NA)
+
+
+plotdt_pat$pasted_colors <- paste(plotdt_pat$ERCC1_final,plotdt_pat$ERCC2_final,plotdt_pat$ERCC3_final,plotdt_pat$ERCC4_final,plotdt_pat$ERCC5_final,plotdt_pat$ERCC6_final,plotdt_pat$ERCC8_final, sep = "||")
+plotdt_pat$pasted_colors <-gsub("NA","",plotdt_pat$pasted_colors)
+plotdt_pat$pasted_colors <-gsub("||","",plotdt_pat$pasted_colors)
+#table(plotdt_pat$pasted_colors)
+
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||||||||||||"] <- "#A9A9A9"
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||||||||||ERCC6||"] <- "#0000FF"
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||||||||ERCC5||||"] <- "#FF8C00"
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||||ERCC3||||||||"] <- "#800000"
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||ERCC2||||||||||"] <- "#008000"
+plotdt_pat$BRCAdefColor_colorscheme[plotdt_pat$pasted_colors == "||ERCC2||||||||ERCC6||"] <- "#800080"
+
+
+
+
+
+
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC2_final)] <- "#0000FF"
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC3_final)] <- "#FF8C00"
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC4_final)] <- "#800000"
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC5_final)] <- "#808000"
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC6_final)] <- "#008000"
+#plotdt_pat$BRCAdefColor_colorscheme[!is.na(plotdt_pat$ERCC8_final)] <- "#800080"
+
+
+
+plotdt_pat$nerd_status <- ifelse(plotdt_pat$BRCAdefColor_colorscheme %in% c("#A9A9A9","#0000FF","#FF8C00", "#0000FF", "#800000"), "WT", "ERCC2 mutant")
+#plotdt_pat$BRCAdefColor_colorscheme <- ifelse(plotdt_pat$BRCAdefColor_colorscheme %in% c("#008000", "#800080"), "#008000", #"#A9A9A9")
+
+
+df <- plotdt_pat[order(plotdt_pat$ID8),]
+
+```
+
+```{r}
+
+#BAP1: 	TCGA-CZ-5469, TCGA-B0-5097, TCGA-CW-5580, TCGA-B0-5088,TCGA-B0-5096,TCGA-CZ-4864,TCGA-CJ-4882
+
+df$ID8 <- ifelse(df$ID8 == 0, 0.1, df$ID8)
+df$width <- 1
+df$width <- ifelse(!df$BRCAdefColor_colorscheme %in% c("#A9A9A9"), 1,1)
+df$width2 <- 1.75
+df$width2 <- ifelse(!df$BRCAdefColor_colorscheme %in% c("#A9A9A9"), 1.75,1.75)
+g <- ggbarplot(df, x = "tcgaids", y = "ID8", width = df$width,
+       fill = "BRCAdefColor_colorscheme",               # change fill color by cyl
+          color = "white",                 # Set bar border colors to white
+          palette = "jco",            # jco journal color palett. see ?ggpar
+          sort.val = "asc",          # Sort the value in dscending order
+          sort.by.groups = FALSE,     # Don't sort inside each group
+          x.text.angle = 90      ,                             # Add segments from y = 0 to dots
+           ggtheme = theme_pubr()        # Rotate vertically x axis texts
+          )+ theme(axis.text.x = element_text(vjust=0.5,colour = df$BRCAdefColor_colorscheme, size = 10)  ) + xlab("") + ylab("Cosmic ID8 signature absolute number")+ scale_fill_manual("BRCAdefColor_colorscheme", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                     "#A9A9A9" = "WT",
+  "#0000FF" = expression(paste(italic("ERCC6"), " mutant")),
+  "#FF8C00" = expression(paste(italic("ERCC5"), " mutant")),
+  "#800000" = expression(paste(italic("ERCC3"), " mutant")),
+ "#008000" = expression(paste(italic("ERCC2"), " mutant")),
+ 
+  "#800080" = expression(paste(italic("ERCC2/3/6"), " mutant"))
+
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "#008000" = "#008000" ,
+                                  "#A9A9A9" = "#A9A9A9",
+                                  "#0000FF" = "#0000FF",
+  "#FF8C00" = "#FF8C00",
+  "#800000" = "#800000",
+ "#008000" = "#008000",
+ 
+  "#800080" =  "#800080"
+                                  
+                                   
+                                     
+                                    )) + theme(legend.title= element_blank(),legend.position="bottom")+
+  theme(
+        axis.text.x=element_blank(),axis.ticks.x = element_line(size = df$width2,
+                                           colour = df$BRCAdefColor_colorscheme))+ ylim(0, 15) + xlab("TCGA KIRC patients (n = 289)")+ geom_hline(yintercept=5, linetype="dashed", color = "red")+ annotate("text", x = 30, y = 8, label = "Fisher's p: 0.00018")
+print(g)
+ggsave(file="fig5.svg", plot=g, width=10, height=4)
+```
+
+
+```{r}
+df$nercat <- "1"
+df$nercat <- ifelse(df$BRCAdefColor_colorscheme == "#A9A9A9", "WT", "NER family mutants")
+ggbarplot(df, x = "nercat", y = "ID8", width = 0.8, 
+ add = "mean_se", error.plot = "upper_errorbar",
+  position = position_dodge(0.9), fill = "grey")+
+  stat_compare_means(label.y = 10) +xlab("")+coord_cartesian(ylim=c(0,10))+ 
+scale_y_continuous(breaks= pretty_breaks())
+```
+
+
+```{r}
+
+df$mutStat <- ifelse(!df$BRCAdefColor_colorscheme %in% "#A9A9A9", "NERD", "WT")
+
+FisherBRCA_HRD_42 <- fisher.test(table(df$mutStat, round(df$ID8, 
+    2) > 5))
+p_valBRCA_HRD <- round(FisherBRCA_HRD_42$p.value, 5)
+niceTab_BRCA_HRD <- table(df$mutStat, round(df$ID8, 2) > 5)
+add_sum_col <- cbind(sum(niceTab_BRCA_HRD[1, 1], niceTab_BRCA_HRD[2, 1]), sum(niceTab_BRCA_HRD[1, 
+    2], niceTab_BRCA_HRD[2, 2]))
+add_sum_row <- rbind(sum(niceTab_BRCA_HRD[1, 1], niceTab_BRCA_HRD[1, 2]), sum(niceTab_BRCA_HRD[2, 
+    1], niceTab_BRCA_HRD[2, 2]))
+add_sum_row <- rbind(add_sum_row, dim(df)[1])
+niceTab_BRCA_HRD <- rbind(niceTab_BRCA_HRD, add_sum_col)
+niceTab_BRCA_HRD <- cbind(niceTab_BRCA_HRD, add_sum_row)
+rownames(niceTab_BRCA_HRD) <- c("NERD-candidate", "WT", "Total")
+colnames(niceTab_BRCA_HRD) <- c("ID8 <= 5", "ID8 > 5", "Total")
+pander(niceTab_BRCA_HRD)
+
+print(paste0("Fisher's p: ",p_valBRCA_HRD))
+```
+
+```{r}
+rna_w <- fread("rna_w.csv", data.table = F)
+plotdt_final <- merge(plotdt_pat, rna_w, by.x = "tcgaids", by.y = "CaseID")
+
+plotdt_final$PTGR1 <- (log2(plotdt_final$PTGR1+1))
+plotdt_final$PTGR2 <- (log2(plotdt_final$PTGR2+1))
+plotdt_final$ERCC1 <- (log2(plotdt_final$ERCC1+1))
+plotdt_final$ERCC2 <- (log2(plotdt_final$ERCC2+1))
+plotdt_final$ERCC3 <- (log2(plotdt_final$ERCC3+1))
+plotdt_final$ERCC4 <- (log2(plotdt_final$ERCC4+1))
+plotdt_final$ERCC5 <- (log2(plotdt_final$ERCC5+1))
+plotdt_final$ERCC6 <- (log2(plotdt_final$ERCC6+1))
+plotdt_final$ERCC8 <- (log2(plotdt_final$ERCC8+1))
+plotdt_final$EPAS1 <- (log2(plotdt_final$EPAS1+1))
+
+df_rna <- plotdt_final 
+```
+
+
+
+```{r}
+df_rna <- df_rna[order(df_rna$PTGR1),]
+
+df_rna$width <- 1
+df_rna$width <- ifelse(!df_rna$BRCAdefColor_colorscheme %in% c("#A9A9A9"), 2,1)
+
+
+g <- ggbarplot(df_rna, x = "tcgaids", y = "PTGR1", width =df_rna$width,
+       fill = "BRCAdefColor_colorscheme",               # change fill color by cyl
+          color = "white",                 # Set bar border colors to white
+          palette = "jco",            # jco journal color palett. see ?ggpar
+          sort.val = "asc",          # Sort the value in dscending order
+          sort.by.groups = FALSE,     # Don't sort inside each group
+          x.text.angle = 90      ,                             # Add segments from y = 0 to dots
+           ggtheme = theme_pubr()        # Rotate vertically x axis texts
+          )+ theme(axis.text.x = element_text(vjust=0.5,colour = df_rna$BRCAdefColor_colorscheme, size = 10)  ) + xlab("") + ylab("PTGR1 expression (log2 (FPKM+1))")+ scale_fill_manual("BRCAdefColor_colorscheme", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                     "#A9A9A9" = "WT",
+  "#0000FF" = "ERCC6 mutant",
+  "#FF8C00" = "ERCC5 mutant",
+  "#800000" = "ERCC3 mutant",
+ "#008000" = "ERCC2 mutant",
+ 
+  "#800080" = "ERCC2/3/6 mutant"
+
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "#008000" = "#008000" ,
+                                  "#A9A9A9" = "#A9A9A9",
+                                  "#0000FF" = "#0000FF",
+  "#FF8C00" = "#FF8C00",
+  "#800000" = "#800000",
+ "#008000" = "#008000",
+ 
+  "#800080" =  "#800080" )) + theme(legend.title= element_blank(),legend.position="bottom")+
+  theme(
+        axis.text.x=element_blank(),axis.ticks.x = element_line(size = 1.75,
+                                           colour = df_rna$BRCAdefColor_colorscheme),)+ ylim(0, 7) + xlab("TCGA KIRC patients (n = 285)")
+print(g)
+ggsave(file="fig6.svg", plot=g, width=10, height=4)
+```
+```{r}
+df_all <- fread("ptgr1_tpm_fpkm.csv")
+df_annot_tcga <- fread("gdc_sample_sheet.2023-02-01.tsv")
+df_annot_tcga <- df_annot_tcga[,c("Case ID","File ID")]
+df_all$tpm_log2 <- log2(df_all$tpm_unstranded+1)
+df_all$fpkm_log2 <- log2(df_all$fpkm_unstranded+1)
+df_all$samplename <- data.frame(str_split_fixed(df_all$samplename, "expression\\/\\/", 2))[,2]
+df_all <- merge(df_all, df_annot_tcga, by.x = "samplename", by.y = "File ID")
+df_all <- df_all[!duplicated(df_all$`Case ID`),]
+```
+
+
+```{r}
+
+df_rna <- merge(df_rna,df_all, by.x = "tcgaids", by.y = "Case ID" )
+df_rna <- df_rna[order(df_rna$BRCAdefColor_colorscheme, decreasing = T),]
+
+g <- ggscatter(df_rna, x = "ID8", y = "PTGR1",color = "BRCAdefColor_colorscheme") + xlab("Cosmic signature ID8 absolute number") + labs(y=expression(paste(italic("PTGR1")," expression, log2(FPKM+1)")))+ xlim(0, 15)+ ylim(0, 7)+ geom_hline(yintercept=3.879, linetype="dashed", color = "red")+ geom_vline(xintercept=5, linetype="dashed", color = "red")+ scale_color_manual("BRCAdefColor_colorscheme", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                     "#A9A9A9" = "WT",
+  "#0000FF" = expression(paste(italic("ERCC6"), " mutant")),
+  "#FF8C00" = expression(paste(italic("ERCC5"), " mutant")),
+  "#800000" = expression(paste(italic("ERCC3"), " mutant")),
+ "#008000" = expression(paste(italic("ERCC2"), " mutant")),
+ 
+  "#800080" = expression(paste(italic("ERCC2/3/6"), " mutant"))
+
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "#008000" = "#008000" ,
+                                  "#A9A9A9" = "#A9A9A9",
+                                  "#0000FF" = "#0000FF",
+  "#FF8C00" = "#FF8C00",
+  "#800000" = "#800000",
+ "#008000" = "#008000",
+ 
+  "#800080" =  "#800080" )) + theme(legend.title= element_blank(),legend.position="bottom")
+
+ggExtra::ggMarginal(g, type = "histogram",margins = "y")
+```
+
+```{r}
+
+#df_rna <- merge(df_rna,df_all, by.x = "tcgaids", by.y = "Case ID" )
+df_rna <- df_rna[order(df_rna$BRCAdefColor_colorscheme, decreasing = T),]
+
+g <- ggscatter(df_rna, x = "ID8", y = "tpm_log2",color = "BRCAdefColor_colorscheme") + xlab("Cosmic signature ID8 absolute number") + ylab("PTGR1 expression, log2(TPM+1)")+ xlim(0, 15)+ ylim(0, 10)+ geom_hline(yintercept=3.879, linetype="dashed", color = "red")+ geom_vline(xintercept=5, linetype="dashed", color = "red")+ scale_color_manual("BRCAdefColor_colorscheme", #"Color code:", 
+                           labels=c(
+                                    
+                                   
+                                     "#A9A9A9" = "WT",
+  "#0000FF" = "ERCC6 mutant",
+  "#FF8C00" = "ERCC5 mutant",
+  "#800000" = "ERCC3 mutant",
+ "#008000" = "ERCC2 mutant",
+ 
+  "#800080" = "ERCC2/3/6 mutant"
+
+                                 
+                                   
+                                    ),
+                            values=c(
+                                     "#008000" = "#008000" ,
+                                  "#A9A9A9" = "#A9A9A9",
+                                  "#0000FF" = "#0000FF",
+  "#FF8C00" = "#FF8C00",
+  "#800000" = "#800000",
+ "#008000" = "#008000",
+ 
+  "#800080" =  "#800080" )) + theme(legend.title= element_blank(),legend.position="bottom")
+
+ggExtra::ggMarginal(g, type = "histogram")
+```
+
+
