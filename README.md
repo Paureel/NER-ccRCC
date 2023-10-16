@@ -47,7 +47,7 @@ Conclusions: ccRCC cell line-based analysis showed that NER deficiency is likely
    ```sh
    git clone https://github.com/Paureel/NER-ccRCC.git
    ```
-2. Use R and install packages
+2. Use R >= 4.2.3
    
 
 
@@ -55,11 +55,10 @@ Conclusions: ccRCC cell line-based analysis showed that NER deficiency is likely
 
 ## Usage
 
-1. 
+1. KIRC_reproduce_figures.RmD contains the code for reproducing the figures in the paper.
 
-2. 
+2. KIRC_extract features.RmD is used for mutational signature extraction from the cohorts used in this study.
 
-3. 
 
 <!-- LICENSE -->
 
